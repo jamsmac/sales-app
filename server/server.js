@@ -12,7 +12,7 @@ const ordersRoutes = require('./routes/orders');
 const reportsRoutes = require('./routes/reports');
 
 const app = express();
-const PORT = process.env.PORT || 3001;
+const PORT = process.env.PORT || 3000;
 
 // Middleware
 app.use(helmet({
@@ -23,6 +23,11 @@ app.use(morgan('combined'));
 app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+
+// Перенаправление с корня на login
+app.get('/', (req, res) => {
+    res.redirect('/login.html');
+});
 
 // Static files
 app.use(express.static(path.join(__dirname, '../public')));
@@ -99,14 +104,14 @@ app.use((req, res) => {
     res.status(404).json({ error: 'Маршрут не найден' });
 });
 
-// Start server
-app.listen(PORT, () => {
+// ВАЖНО: добавьте '0.0.0.0' для Railway
+app.listen(PORT, '0.0.0.0', () => {
     console.log(`
     ╔═══════════════════════════════════════╗
     ║   📊 Система анализа продаж v5.0     ║
     ╠═══════════════════════════════════════╣
     ║   Сервер запущен на порту: ${PORT}      ║
-    ║   URL: http://localhost:${PORT}          ║
+    ║   Railway URL: ${process.env.RAILWAY_PUBLIC_DOMAIN || 'localhost:' + PORT} ║
     ╠═══════════════════════════════════════╣
     ║   Тестовые учетные данные:           ║
     ║   Admin: admin / admin123             ║
