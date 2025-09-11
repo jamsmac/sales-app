@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Система анализа продаж - Вход</title>
+    <link rel="stylesheet" href="css/styles.css">
+</head>
+<body class="login-page">
+    <div class="login-container">
+        <div class="login-box">
+            <div class="logo-section">
+                <div class="logo">📊</div>
+                <h1>Система анализа продаж</h1>
+                <p class="slogan">Ваши данные под контролем</p>
+            </div>
+            
+            <form id="loginForm" class="login-form">
+                <div class="form-group">
+                    <label for="username">Имя пользователя</label>
+                    <input type="text" id="username" name="username" required 
+                           placeholder="Введите логин" autocomplete="username">
+                </div>
+                
+                <div class="form-group">
+                    <label for="password">Пароль</label>
+                    <input type="password" id="password" name="password" required 
+                           placeholder="Введите пароль" autocomplete="current-password">
+                </div>
+                
+                <button type="submit" class="btn-login" id="loginBtn">
+                    <span class="btn-text">Войти в систему</span>
+                    <span class="btn-loader" style="display: none;">⏳</span>
+                </button>
+                
+                <div class="alert alert-error" id="errorMessage" style="display: none;">
+                    Неверный логин или пароль
+                </div>
+                
+                <div class="alert alert-success" id="successMessage" style="display: none;">
+                    Вход выполнен успешно! Перенаправление...
+                </div>
+            </form>
+            
+            <div class="demo-credentials">
+                <h4>Демо доступ:</h4>
+                <div class="credential-item">
+                    <span class="icon">👨‍💼</span>
+                    <div>
+                        <strong>Администратор:</strong><br>
+                        Логин: <code>admin</code> | Пароль: <code>admin123</code>
+                    </div>
+                </div>
+                <div class="credential-item">
+                    <span class="icon">👩‍💼</span>
+                    <div>
+                        <strong>Бухгалтер:</strong><br>
+                        Логин: <code>buh1</code> | Пароль: <code>buh123</code>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="footer">
+            © 2025 Ваша компания | Версия 5.0
+        </div>
+    </div>
+    
+    <script src="js/auth.js"></script>
+</body>
+</html>

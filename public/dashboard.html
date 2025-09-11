@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Анализ продаж v5.0 - Панель управления</title>
+    <link rel="stylesheet" href="css/styles.css">
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+    <div class="app-container">
+        <!-- Шапка с информацией о пользователе -->
+        <header class="app-header">
+            <div class="header-left">
+                <h1 class="app-title">
+                    <span class="logo-icon">📊</span>
+                    <span>Анализ продаж v5.0</span>
+                    <span class="user-role-badge" id="roleBadge"></span>
+                </h1>
+            </div>
+            <div class="header-right">
+                <div class="user-info">
+                    <span class="user-avatar">👤</span>
+                    <div class="user-details">
+                        <span class="user-name" id="userName">Загрузка...</span>
+                        <span class="user-role" id="userRole">...</span>
+                    </div>
+                </div>
+                <button class="btn btn-logout" onclick="logout()">Выйти</button>
+            </div>
+        </header>
+
+        <!-- Основные вкладки -->
+        <nav class="main-tabs">
+            <button class="tab-btn active" data-tab="overview">📈 Обзор</button>
+            <button class="tab-btn" data-tab="table">📋 Таблица</button>
+            <button class="tab-btn" data-tab="charts">📊 Графики</button>
+            <button class="tab-btn" data-tab="products">📦 Товары</button>
+            <button class="tab-btn" data-tab="database">🗄️ База данных</button>
+        </nav>
+
+        <!-- Контент вкладок -->
+        <main class="main-content">
+            <!-- Вкладка Обзор -->
+            <div class="tab-content active" id="overview-tab">
+                <!-- Статистика -->
+                <div class="stats-grid" id="statsGrid"></div>
+                
+                <!-- Зона загрузки файла (только для админа) -->
+                <div class="upload-section admin-only" id="uploadSection">
+                    <div class="upload-area" id="uploadArea">
+                        <input type="file" id="fileInput" accept=".xlsx,.xls" hidden>
+                        <div class="upload-content">
+                            <div class="upload-icon">📁</div>
+                            <h3>Загрузите файл Excel</h3>
+                            <p>Перетащите файл сюда или нажмите для выбора</p>
+                            <button class="btn btn-primary" onclick="document.getElementById('fileInput').click()">
+                                Выбрать файл
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Вкладка Таблица -->
+            <div class="tab-content" id="table-tab">
+                <div class="table-container">
+                    <div class="table-header">
+                        <h2>Данные по периодам</h2>
+                        <div class="table-controls">
+                            <input type="text" class="search-input" placeholder="Поиск..." id="tableSearch">
+                            <button class="btn btn-secondary">Фильтры</button>
+                            <button class="btn btn-success">Экспорт</button>
+                        </div>
+                    </div>
+                    <div class="table-wrapper">
+                        <table id="dataTable">
+                            <thead></thead>
+                            <tbody></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Остальные вкладки -->
+            <div class="tab-content" id="charts-tab">
+                <div class="charts-grid" id="chartsGrid"></div>
+            </div>
+
+            <div class="tab-content" id="products-tab">
+                <div class="products-container" id="productsContainer"></div>
+            </div>
+
+            <div class="tab-content" id="database-tab">
+                <div class="database-container">
+                    <div class="db-header">
+                        <h2>Управление базой данных</h2>
+                        <div class="db-controls admin-only">
+                            <button class="btn btn-danger" onclick="clearDatabase()">Очистить БД</button>
+                            <button class="btn btn-primary" onclick="exportDatabase()">Экспорт БД</button>
+                        </div>
+                    </div>
+                    <div class="db-stats" id="dbStats"></div>
+                    <div class="db-content" id="dbContent"></div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Модальные окна -->
+    <div class="modal" id="modal"></div>
+    <div class="toast-container" id="toastContainer"></div>
+    <div class="loading-overlay" id="loadingOverlay">
+        <div class="spinner"></div>
+    </div>
+
+    <script src="js/app.js"></script>
+</body>
+</html>
