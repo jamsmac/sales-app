@@ -8,7 +8,7 @@ module.exports = (req, res, next) => {
         return res.status(401).json({ error: 'Требуется авторизация' });
     }
     
-    jwt.verify(token, process.env.JWT_SECRET || 'secret', (err, user) => {
+    jwt.verify(token, process.env.JWT_SECRET || 'fallback-secret-change-in-production', (err, user) => {
         if (err) {
             return res.status(403).json({ error: 'Недействительный токен' });
         }

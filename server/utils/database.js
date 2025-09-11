@@ -1,86 +1,253 @@
+const sqlite3 = require('sqlite3').verbose();
 const bcrypt = require('bcryptjs');
+const path = require('path');
+const fs = require('fs');
 
-// Простая база данных в памяти
 class Database {
     constructor() {
-        // Пользователи системы
-        this.users = [
-            {
-                id: 1,
-                username: 'admin',
-                password: bcrypt.hashSync('admin123', 10),
-                fullName: 'Администратор',
-                role: 'admin'
-            },
-            {
-                id: 2,
-                username: 'buh1',
-                password: bcrypt.hashSync('buh123', 10),
-                fullName: 'Иванова А.П.',
-                role: 'accountant'
+        // Создаем папку для базы данных
+        const dbDir = path.join(__dirname, '../../data');
+        if (!fs.existsSync(dbDir)) {
+            fs.mkdirSync(dbDir, { recursive: true });
+        }
+        
+        // Подключение к SQLite базе данных
+        this.db = new sqlite3.Database(path.join(dbDir, 'sales.db'), (err) => {
+            if (err) {
+                console.error('Ошибка подключения к базе данных:', err);
+            } else {
+                console.log('✅ Подключение к SQLite базе данных установлено');
+                this.initTables();
             }
-        ];
-        
-        // Полные данные заказов со ВСЕМИ колонками
-        this.orders = [];
-        this.files = [];
-        
-        // Агрегированные данные для отчетности
-        this.yearlyData = {};
-        this.monthlyData = {};
-        this.dailyData = {};
-        this.productData = {};
+        });
     }
     
-    // Users
+    // Инициализация таблиц
+    initTables() {
+        this.db.serialize(() => {
+            // Таблица пользователей
+            this.db.run(`
+                CREATE TABLE IF NOT EXISTS users (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    username TEXT UNIQUE NOT NULL,
+                    password TEXT NOT NULL,
+                    fullName TEXT NOT NULL,
+                    role TEXT NOT NULL DEFAULT 'accountant',
+                    createdAt DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+            `);
+            
+            // Таблица заказов
+            this.db.run(`
+                CREATE TABLE IF NOT EXISTS orders (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    orderNumber TEXT,
+                    productCode TEXT,
+                    productName TEXT NOT NULL,
+                    productVariant TEXT DEFAULT 'Стандарт',
+                    paymentTypeRaw TEXT,
+                    paymentType TEXT NOT NULL,
+                    quantity REAL DEFAULT 1,
+                    unit TEXT DEFAULT 'шт',
+                    pricePerUnit REAL DEFAULT 0,
+                    discountPercent REAL DEFAULT 0,
+                    discountAmount REAL DEFAULT 0,
+                    totalAmount REAL NOT NULL,
+                    isReturn BOOLEAN DEFAULT 0,
+                    operationTime TEXT,
+                    operationDate TEXT NOT NULL,
+                    year INTEGER NOT NULL,
+                    month INTEGER NOT NULL,
+                    day INTEGER NOT NULL,
+                    cashier TEXT,
+                    shift TEXT,
+                    checkNumber TEXT,
+                    customerName TEXT,
+                    customerPhone TEXT,
+                    notes TEXT,
+                    status TEXT DEFAULT 'completed',
+                    fileId TEXT,
+                    uploadedBy INTEGER,
+                    uploadedAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    product TEXT, -- для совместимости
+                    flavor TEXT,  -- для совместимости
+                    price REAL,   -- для совместимости
+                    date TEXT,    -- для совместимости
+                    FOREIGN KEY (uploadedBy) REFERENCES users (id)
+                )
+            `);
+            
+            // Таблица файлов
+            this.db.run(`
+                CREATE TABLE IF NOT EXISTS files (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    fileName TEXT NOT NULL,
+                    fileSize INTEGER,
+                    uploadDate DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    recordsTotal INTEGER DEFAULT 0,
+                    recordsNew INTEGER DEFAULT 0,
+                    recordsDuplicate INTEGER DEFAULT 0,
+                    recordsErrors INTEGER DEFAULT 0,
+                    uploadedBy INTEGER,
+                    FOREIGN KEY (uploadedBy) REFERENCES users (id)
+                )
+            `);
+            
+            // Создаем индексы для производительности
+            this.db.run(`CREATE INDEX IF NOT EXISTS idx_orders_date ON orders (operationDate)`);
+            this.db.run(`CREATE INDEX IF NOT EXISTS idx_orders_payment ON orders (paymentType)`);
+            this.db.run(`CREATE INDEX IF NOT EXISTS idx_orders_product ON orders (productName)`);
+            
+            // Создаем тестовых пользователей если их нет
+            this.createDefaultUsers();
+        });
+    }
+    
+    // Создание пользователей по умолчанию
+    createDefaultUsers() {
+        this.db.get("SELECT COUNT(*) as count FROM users", (err, row) => {
+            if (err) {
+                console.error('Ошибка проверки пользователей:', err);
+                return;
+            }
+            
+            if (row.count === 0) {
+                const users = [
+                    {
+                        username: 'admin',
+                        password: bcrypt.hashSync('admin123', 10),
+                        fullName: 'Администратор',
+                        role: 'admin'
+                    },
+                    {
+                        username: 'buh1',
+                        password: bcrypt.hashSync('buh123', 10),
+                        fullName: 'Иванова А.П.',
+                        role: 'accountant'
+                    }
+                ];
+                
+                const stmt = this.db.prepare(`
+                    INSERT INTO users (username, password, fullName, role) 
+                    VALUES (?, ?, ?, ?)
+                `);
+                
+                users.forEach(user => {
+                    stmt.run([user.username, user.password, user.fullName, user.role]);
+                });
+                
+                stmt.finalize();
+                console.log('✅ Созданы тестовые пользователи');
+            }
+        });
+    }
+    
+    // Методы для работы с пользователями
     getUserByUsername(username) {
-        return this.users.find(u => u.username === username);
+        return new Promise((resolve, reject) => {
+            this.db.get(
+                "SELECT * FROM users WHERE username = ?",
+                [username],
+                (err, row) => {
+                    if (err) reject(err);
+                    else resolve(row);
+                }
+            );
+        });
     }
     
     getUserById(id) {
-        return this.users.find(u => u.id === id);
-    }
-    
-    // Orders
-    getOrders(filters = {}) {
-        let orders = [...this.orders];
-        
-        if (filters.startDate) {
-            orders = orders.filter(o => new Date(o.date) >= new Date(filters.startDate));
-        }
-        if (filters.endDate) {
-            orders = orders.filter(o => new Date(o.date) <= new Date(filters.endDate));
-        }
-        if (filters.paymentType) {
-            orders = orders.filter(o => o.paymentType === filters.paymentType);
-        }
-        if (filters.product) {
-            orders = orders.filter(o => 
-                o.product.toLowerCase().includes(filters.product.toLowerCase())
+        return new Promise((resolve, reject) => {
+            this.db.get(
+                "SELECT * FROM users WHERE id = ?",
+                [id],
+                (err, row) => {
+                    if (err) reject(err);
+                    else resolve(row);
+                }
             );
-        }
-        
-        return orders;
+        });
     }
     
-    // ИСПРАВЛЕНО: Очистка БД НЕ удаляет пользователей
-    clear() {
-        // Очищаем только данные, НО НЕ ПОЛЬЗОВАТЕЛЕЙ!
-        this.orders = [];
-        this.files = [];
-        this.yearlyData = {};
-        this.monthlyData = {};
-        this.dailyData = {};
-        this.productData = {};
-        
-        return { 
-            success: true, 
-            message: 'База данных очищена (пользователи сохранены)' 
-        };
+    // Методы для работы с заказами
+    getOrders(filters = {}) {
+        return new Promise((resolve, reject) => {
+            let query = "SELECT * FROM orders WHERE 1=1";
+            const params = [];
+            
+            if (filters.startDate) {
+                query += " AND date(operationDate) >= date(?)";
+                params.push(filters.startDate);
+            }
+            if (filters.endDate) {
+                query += " AND date(operationDate) <= date(?)";
+                params.push(filters.endDate);
+            }
+            if (filters.paymentType) {
+                query += " AND paymentType = ?";
+                params.push(filters.paymentType);
+            }
+            if (filters.product) {
+                query += " AND productName LIKE ?";
+                params.push(`%${filters.product}%`);
+            }
+            
+            query += " ORDER BY operationDate DESC";
+            
+            this.db.all(query, params, (err, rows) => {
+                if (err) reject(err);
+                else resolve(rows || []);
+            });
+        });
     }
-
-    // Обработка файла с сохранением ВСЕХ 20 колонок
-    processFileData(rawExcelData, file, userId) {
+    
+    // Добавление заказа
+    addOrder(order) {
+        return new Promise((resolve, reject) => {
+            const stmt = this.db.prepare(`
+                INSERT INTO orders (
+                    orderNumber, productCode, productName, productVariant,
+                    paymentTypeRaw, paymentType, quantity, unit, pricePerUnit,
+                    discountPercent, discountAmount, totalAmount, isReturn,
+                    operationTime, operationDate, year, month, day,
+                    cashier, shift, checkNumber, customerName, customerPhone,
+                    notes, status, fileId, uploadedBy, product, flavor, price, date
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            `);
+            
+            stmt.run([
+                order.orderNumber, order.productCode, order.productName, order.productVariant,
+                order.paymentTypeRaw, order.paymentType, order.quantity, order.unit, order.pricePerUnit,
+                order.discountPercent, order.discountAmount, order.totalAmount, order.isReturn ? 1 : 0,
+                order.operationTime, order.operationDate, order.year, order.month, order.day,
+                order.cashier, order.shift, order.checkNumber, order.customerName, order.customerPhone,
+                order.notes, order.status, order.fileId, order.uploadedBy,
+                order.product, order.flavor, order.price, order.date
+            ], function(err) {
+                if (err) reject(err);
+                else resolve({ id: this.lastID, ...order });
+            });
+            
+            stmt.finalize();
+        });
+    }
+    
+    // Проверка дубликатов
+    checkDuplicate(orderNumber, checkNumber, operationDate) {
+        return new Promise((resolve, reject) => {
+            this.db.get(
+                "SELECT id FROM orders WHERE orderNumber = ? AND checkNumber = ? AND operationDate = ?",
+                [orderNumber, checkNumber, operationDate],
+                (err, row) => {
+                    if (err) reject(err);
+                    else resolve(!!row);
+                }
+            );
+        });
+    }
+    
+    // Обработка файла с данными
+    async processFileData(rawExcelData, file, userId) {
         const stats = {
             total: 0,
             new: 0,
@@ -114,9 +281,6 @@ class Database {
                 
                 // Создаем полную запись со ВСЕМИ данными
                 const order = {
-                    id: this.orders.length + 1,
-                    
-                    // Основные поля
                     orderNumber: row[0] || '',
                     productCode: row[1] || '',
                     productName: row[2] || 'Без названия',
@@ -152,7 +316,6 @@ class Database {
                     // Служебные поля
                     fileId: file.filename,
                     uploadedBy: userId,
-                    uploadedAt: new Date(),
                     
                     // Совместимость со старым API
                     product: row[2] || 'Без названия',
@@ -162,20 +325,17 @@ class Database {
                 };
                 
                 // Проверка дубликатов
-                const exists = this.orders.find(o => 
-                    o.orderNumber === order.orderNumber && 
-                    o.checkNumber === order.checkNumber &&
-                    o.operationDate === order.operationDate
+                const isDuplicate = await this.checkDuplicate(
+                    order.orderNumber, 
+                    order.checkNumber, 
+                    order.operationDate
                 );
                 
-                if (exists) {
+                if (isDuplicate) {
                     stats.duplicate++;
                 } else {
-                    this.orders.push(order);
+                    await this.addOrder(order);
                     stats.new++;
-                    
-                    // Обновляем агрегированные данные для отчетности
-                    this.updateAggregatedData(order);
                 }
                 
             } catch (error) {
@@ -185,11 +345,9 @@ class Database {
         }
         
         // Сохраняем информацию о файле
-        this.files.push({
-            id: this.files.length + 1,
+        await this.addFile({
             fileName: file.originalname,
             fileSize: file.size,
-            uploadDate: new Date(),
             recordsTotal: stats.total,
             recordsNew: stats.new,
             recordsDuplicate: stats.duplicate,
@@ -200,59 +358,198 @@ class Database {
         return stats;
     }
     
-    // Обновление агрегированных данных для отчетности
-    updateAggregatedData(order) {
-        const yearKey = `${order.year}`;
-        const monthKey = `${order.year}_${order.month}`;
-        const dayKey = `${order.year}_${order.month}_${order.day}`;
-        
-        // Инициализация структур
-        if (!this.yearlyData[yearKey]) {
-            this.yearlyData[yearKey] = this.initPaymentData();
-        }
-        if (!this.monthlyData[monthKey]) {
-            this.monthlyData[monthKey] = this.initPaymentData();
-        }
-        if (!this.dailyData[dayKey]) {
-            this.dailyData[dayKey] = this.initPaymentData();
-        }
-        
-        // Обновление данных
-        const type = order.paymentType;
-        const amount = order.totalAmount;
-        
-        this.yearlyData[yearKey][type].count++;
-        this.yearlyData[yearKey][type].total += amount;
-        
-        this.monthlyData[monthKey][type].count++;
-        this.monthlyData[monthKey][type].total += amount;
-        
-        this.dailyData[dayKey][type].count++;
-        this.dailyData[dayKey][type].total += amount;
-        
-        // Обновление данных по продуктам
-        const productKey = `${order.productName}|||${order.productVariant}`;
-        if (!this.productData[productKey]) {
-            this.productData[productKey] = {
-                productCode: order.productCode,
-                productName: order.productName,
-                productVariant: order.productVariant,
-                sales: 0,
-                returns: 0,
-                revenue: 0,
-                returnAmount: 0,
-                quantity: 0
+    // Добавление файла
+    addFile(fileData) {
+        return new Promise((resolve, reject) => {
+            const stmt = this.db.prepare(`
+                INSERT INTO files (fileName, fileSize, recordsTotal, recordsNew, recordsDuplicate, recordsErrors, uploadedBy)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            `);
+            
+            stmt.run([
+                fileData.fileName, fileData.fileSize, fileData.recordsTotal,
+                fileData.recordsNew, fileData.recordsDuplicate, fileData.recordsErrors,
+                fileData.uploadedBy
+            ], function(err) {
+                if (err) reject(err);
+                else resolve({ id: this.lastID, ...fileData });
+            });
+            
+            stmt.finalize();
+        });
+    }
+    
+    // Получение статистики
+    getStatistics() {
+        return new Promise((resolve, reject) => {
+            const queries = [
+                "SELECT COUNT(*) as total FROM orders",
+                "SELECT SUM(totalAmount) as totalRevenue FROM orders WHERE isReturn = 0",
+                "SELECT SUM(totalAmount) as returns FROM orders WHERE isReturn = 1",
+                `SELECT 
+                    paymentType,
+                    COUNT(*) as count,
+                    SUM(totalAmount) as total
+                 FROM orders 
+                 WHERE isReturn = 0
+                 GROUP BY paymentType`
+            ];
+            
+            Promise.all([
+                new Promise((res, rej) => this.db.get(queries[0], (err, row) => err ? rej(err) : res(row))),
+                new Promise((res, rej) => this.db.get(queries[1], (err, row) => err ? rej(err) : res(row))),
+                new Promise((res, rej) => this.db.get(queries[2], (err, row) => err ? rej(err) : res(row))),
+                new Promise((res, rej) => this.db.all(queries[3], (err, rows) => err ? rej(err) : res(rows)))
+            ]).then(([totalData, revenueData, returnsData, paymentData]) => {
+                const stats = {
+                    total: totalData.total || 0,
+                    totalRevenue: revenueData.totalRevenue || 0,
+                    returns: returnsData.returns || 0,
+                    byPaymentType: {}
+                };
+                
+                paymentData.forEach(row => {
+                    stats.byPaymentType[row.paymentType] = {
+                        count: row.count,
+                        total: row.total
+                    };
+                });
+                
+                resolve(stats);
+            }).catch(reject);
+        });
+    }
+    
+    // Получение файлов
+    getFiles() {
+        return new Promise((resolve, reject) => {
+            this.db.all(`
+                SELECT f.*, u.fullName as uploadedByName 
+                FROM files f 
+                LEFT JOIN users u ON f.uploadedBy = u.id 
+                ORDER BY f.uploadDate DESC
+            `, (err, rows) => {
+                if (err) reject(err);
+                else resolve(rows || []);
+            });
+        });
+    }
+    
+    // Информация о базе данных
+    getInfo() {
+        return new Promise((resolve, reject) => {
+            Promise.all([
+                new Promise((res, rej) => this.db.get("SELECT COUNT(*) as count FROM orders", (err, row) => err ? rej(err) : res(row))),
+                new Promise((res, rej) => this.db.get("SELECT COUNT(*) as count FROM files", (err, row) => err ? rej(err) : res(row))),
+                new Promise((res, rej) => this.db.get("SELECT MAX(uploadedAt) as lastUpdate FROM orders", (err, row) => err ? rej(err) : res(row)))
+            ]).then(([ordersData, filesData, updateData]) => {
+                resolve({
+                    totalRecords: ordersData.count || 0,
+                    totalFiles: filesData.count || 0,
+                    lastUpdate: updateData.lastUpdate,
+                    dbSize: 'SQLite DB'
+                });
+            }).catch(reject);
+        });
+    }
+    
+    // Очистка базы данных (только данные, не пользователи)
+    clear() {
+        return new Promise((resolve, reject) => {
+            this.db.serialize(() => {
+                this.db.run("DELETE FROM orders");
+                this.db.run("DELETE FROM files", (err) => {
+                    if (err) reject(err);
+                    else resolve({ 
+                        success: true, 
+                        message: 'База данных очищена (пользователи сохранены)' 
+                    });
+                });
+            });
+        });
+    }
+    
+    // Получение данных для отчетности
+    getReportsData() {
+        return new Promise((resolve, reject) => {
+            const queries = {
+                yearly: `
+                    SELECT year, paymentType, COUNT(*) as count, SUM(totalAmount) as total
+                    FROM orders WHERE isReturn = 0
+                    GROUP BY year, paymentType
+                `,
+                monthly: `
+                    SELECT year, month, paymentType, COUNT(*) as count, SUM(totalAmount) as total
+                    FROM orders WHERE isReturn = 0
+                    GROUP BY year, month, paymentType
+                `,
+                daily: `
+                    SELECT year, month, day, paymentType, COUNT(*) as count, SUM(totalAmount) as total
+                    FROM orders WHERE isReturn = 0
+                    GROUP BY year, month, day, paymentType
+                `,
+                products: `
+                    SELECT 
+                        productName,
+                        productVariant,
+                        COUNT(CASE WHEN isReturn = 0 THEN 1 END) as sales,
+                        COUNT(CASE WHEN isReturn = 1 THEN 1 END) as returns,
+                        SUM(CASE WHEN isReturn = 0 THEN totalAmount ELSE 0 END) as revenue,
+                        SUM(CASE WHEN isReturn = 1 THEN totalAmount ELSE 0 END) as returnAmount,
+                        SUM(CASE WHEN isReturn = 0 THEN quantity ELSE 0 END) as quantity
+                    FROM orders
+                    GROUP BY productName, productVariant
+                `
             };
-        }
-        
-        if (order.isReturn) {
-            this.productData[productKey].returns++;
-            this.productData[productKey].returnAmount += amount;
-        } else {
-            this.productData[productKey].sales++;
-            this.productData[productKey].revenue += amount;
-            this.productData[productKey].quantity += order.quantity;
-        }
+            
+            Promise.all([
+                new Promise((res, rej) => this.db.all(queries.yearly, (err, rows) => err ? rej(err) : res(rows))),
+                new Promise((res, rej) => this.db.all(queries.monthly, (err, rows) => err ? rej(err) : res(rows))),
+                new Promise((res, rej) => this.db.all(queries.daily, (err, rows) => err ? rej(err) : res(rows))),
+                new Promise((res, rej) => this.db.all(queries.products, (err, rows) => err ? rej(err) : res(rows)))
+            ]).then(([yearly, monthly, daily, products]) => {
+                resolve({
+                    yearly: this.groupReportData(yearly, 'year'),
+                    monthly: this.groupReportData(monthly, 'year', 'month'),
+                    daily: this.groupReportData(daily, 'year', 'month', 'day'),
+                    products: this.groupProductData(products)
+                });
+            }).catch(reject);
+        });
+    }
+    
+    // Группировка данных отчетов
+    groupReportData(data, ...keys) {
+        const result = {};
+        data.forEach(row => {
+            const key = keys.map(k => row[k]).join('_');
+            if (!result[key]) {
+                result[key] = this.initPaymentData();
+            }
+            result[key][row.paymentType] = {
+                count: row.count,
+                total: row.total
+            };
+        });
+        return result;
+    }
+    
+    // Группировка данных по продуктам
+    groupProductData(data) {
+        const result = {};
+        data.forEach(row => {
+            const key = `${row.productName}|||${row.productVariant}`;
+            result[key] = {
+                productName: row.productName,
+                productVariant: row.productVariant,
+                sales: row.sales || 0,
+                returns: row.returns || 0,
+                revenue: row.revenue || 0,
+                returnAmount: row.returnAmount || 0,
+                quantity: row.quantity || 0
+            };
+        });
+        return result;
     }
     
     initPaymentData() {
@@ -265,58 +562,46 @@ class Database {
         };
     }
     
-    // Statistics
-    getStatistics() {
-        const stats = {
-            total: this.orders.length,
-            totalRevenue: this.orders.reduce((sum, o) => sum + o.price, 0),
-            byPaymentType: {},
-            byProduct: {}
-        };
-        
-        this.orders.forEach(order => {
-            // По типам оплаты
-            if (!stats.byPaymentType[order.paymentType]) {
-                stats.byPaymentType[order.paymentType] = {
-                    count: 0,
-                    total: 0
-                };
+    // Получение детализации для периода
+    getPeriodDetails(periodKey, paymentType = 'ALL') {
+        return new Promise((resolve, reject) => {
+            let query = "SELECT * FROM orders WHERE 1=1";
+            const params = [];
+            
+            // Фильтр по типу платежа
+            if (paymentType !== 'ALL') {
+                query += " AND paymentType = ?";
+                params.push(paymentType);
             }
-            stats.byPaymentType[order.paymentType].count++;
-            stats.byPaymentType[order.paymentType].total += order.price;
+            
+            // Фильтр по периоду
+            if (periodKey.includes('_')) {
+                const parts = periodKey.split('_');
+                if (parts.length === 2) {
+                    // Месяц
+                    query += " AND year = ? AND month = ?";
+                    params.push(parts[0], parts[1]);
+                } else if (parts.length === 3) {
+                    // День
+                    query += " AND year = ? AND month = ? AND day = ?";
+                    params.push(parts[0], parts[1], parts[2]);
+                }
+            } else {
+                // Год
+                query += " AND year = ?";
+                params.push(periodKey);
+            }
+            
+            query += " ORDER BY operationDate DESC";
+            
+            this.db.all(query, params, (err, rows) => {
+                if (err) reject(err);
+                else resolve(rows || []);
+            });
         });
-        
-        return stats;
     }
     
-    // Files
-    getFiles() {
-        return this.files.map(f => ({
-            ...f,
-            uploadedByName: this.getUserById(f.uploadedBy)?.fullName
-        }));
-    }
-    
-    // Database info
-    getInfo() {
-        return {
-            totalRecords: this.orders.length,
-            totalFiles: this.files.length,
-            lastUpdate: this.orders.length > 0 
-                ? this.orders[this.orders.length - 1].createdAt 
-                : null,
-            dbSize: JSON.stringify(this).length / 1024
-        };
-    }
-    
-    // Clear database
-    clear() {
-        this.orders = [];
-        this.files = [];
-        this.changelog = [];
-    }
-    
-    // Helpers
+    // Вспомогательные методы
     detectPaymentType(str) {
         if (!str) return 'UNKNOWN';
         const s = String(str).toLowerCase();
@@ -385,42 +670,17 @@ class Database {
         };
     }
     
-    // Получение данных для отчетности
-    getReportsData() {
-        return {
-            yearly: this.yearlyData,
-            monthly: this.monthlyData,
-            daily: this.dailyData,
-            products: this.productData
-        };
-    }
-    
-    // Получение детализации для периода
-    getPeriodDetails(periodKey, paymentType = 'ALL') {
-        return this.orders.filter(order => {
-            // Фильтр по типу платежа
-            if (paymentType !== 'ALL' && order.paymentType !== paymentType) {
-                return false;
-            }
-            
-            // Фильтр по периоду
-            if (periodKey.includes('_')) {
-                const parts = periodKey.split('_');
-                if (parts.length === 2) {
-                    // Месяц
-                    return order.year == parts[0] && order.month == parts[1];
-                } else if (parts.length === 3) {
-                    // День
-                    return order.year == parts[0] && 
-                           order.month == parts[1] && 
-                           order.day == parts[2];
+    // Закрытие соединения с базой данных
+    close() {
+        return new Promise((resolve) => {
+            this.db.close((err) => {
+                if (err) {
+                    console.error('Ошибка закрытия базы данных:', err);
+                } else {
+                    console.log('✅ Соединение с базой данных закрыто');
                 }
-            } else {
-                // Год
-                return order.year == periodKey;
-            }
-            
-            return false;
+                resolve();
+            });
         });
     }
 }

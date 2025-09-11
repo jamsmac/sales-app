@@ -3,117 +3,298 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Анализ продаж v5.0 - Панель управления</title>
-    <link rel="stylesheet" href="css/styles.css">
+    <meta name="theme-color" content="#667eea">
+    <title>Система анализа продаж v5.0</title>
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link rel="stylesheet" href="css/styles.css">
 </head>
 <body>
-    <div class="app-container">
-        <!-- Шапка с информацией о пользователе -->
-        <header class="app-header">
-            <div class="header-left">
-                <h1 class="app-title">
-                    <span class="logo-icon">📊</span>
-                    <span>Анализ продаж v5.0</span>
-                    <span class="user-role-badge" id="roleBadge"></span>
-                </h1>
+    <!-- Основной контейнер -->
+    <div class="container">
+        <!-- Шапка приложения -->
+        <div class="app-header">
+            <div class="app-title">
+                <span>📊</span>
+                <span>Система анализа продаж v5.0</span>
             </div>
-            <div class="header-right">
+            <div class="app-controls">
                 <div class="user-info">
                     <span class="user-avatar">👤</span>
                     <div class="user-details">
                         <span class="user-name" id="userName">Загрузка...</span>
                         <span class="user-role" id="userRole">...</span>
+                        <span class="user-role-badge" id="roleBadge"></span>
                     </div>
                 </div>
+                <button class="btn btn-secondary admin-only" onclick="clearDatabase()" id="clearBtn">
+                    <span>🗑️</span>
+                    <span>Очистить БД</span>
+                </button>
+                <button class="btn btn-secondary" onclick="exportDatabase()" id="exportBtn">
+                    <span>💾</span>
+                    <span>Экспорт</span>
+                </button>
+                <div class="theme-toggle" onclick="toggleTheme()" title="Переключить тему"></div>
                 <button class="btn btn-logout" onclick="logout()">Выйти</button>
             </div>
-        </header>
-
-        <!-- Основные вкладки -->
-        <nav class="main-tabs">
-            <button class="tab-btn active" data-tab="overview">📈 Обзор</button>
-            <button class="tab-btn" data-tab="table">📋 Таблица</button>
-            <button class="tab-btn" data-tab="charts">📊 Графики</button>
-            <button class="tab-btn" data-tab="products">📦 Товары</button>
-            <button class="tab-btn" data-tab="database">🗄️ База данных</button>
-        </nav>
-
-        <!-- Контент вкладок -->
-        <main class="main-content">
-            <!-- Вкладка Обзор -->
-            <div class="tab-content active" id="overview-tab">
-                <!-- Статистика -->
-                <div class="stats-grid" id="statsGrid"></div>
-                
-                <!-- Зона загрузки файла (только для админа) -->
-                <div class="upload-section admin-only" id="uploadSection">
-                    <div class="upload-area" id="uploadArea">
-                        <input type="file" id="fileInput" accept=".xlsx,.xls" hidden>
-                        <div class="upload-content">
-                            <div class="upload-icon">📁</div>
-                            <h3>Загрузите файл Excel</h3>
-                            <p>Перетащите файл сюда или нажмите для выбора</p>
-                            <button class="btn btn-primary" onclick="document.getElementById('fileInput').click()">
-                                Выбрать файл
-                            </button>
-                        </div>
+        </div>
+        
+        <!-- Панель статистики -->
+        <div class="stats-panel" id="statsPanel">
+            <div class="stat-card" onclick="showGlobalDetails('ALL')">
+                <div class="stat-icon" style="background: linear-gradient(135deg, #667eea20, #764ba220);">💰</div>
+                <div class="stat-value" id="statTotal">0</div>
+                <div class="stat-label">Общая выручка</div>
+                <div class="stat-change positive hidden" id="statTotalChange">+0%</div>
+            </div>
+            <div class="stat-card" onclick="showGlobalDetails('CASH')">
+                <div class="stat-icon" style="background: #10b98120;">💵</div>
+                <div class="stat-value" id="statCash">0</div>
+                <div class="stat-label">Наличные</div>
+            </div>
+            <div class="stat-card" onclick="showGlobalDetails('QR')">
+                <div class="stat-icon" style="background: #3b82f620;">📱</div>
+                <div class="stat-value" id="statQR">0</div>
+                <div class="stat-label">QR платежи</div>
+            </div>
+            <div class="stat-card" onclick="showGlobalDetails('VIP')">
+                <div class="stat-icon" style="background: #f59e0b20;">⭐</div>
+                <div class="stat-value" id="statVIP">0</div>
+                <div class="stat-label">VIP клиенты</div>
+            </div>
+            <div class="stat-card" onclick="showGlobalDetails('CARD')">
+                <div class="stat-icon" style="background: #8b5cf620;">💳</div>
+                <div class="stat-value" id="statCard">0</div>
+                <div class="stat-label">Карты</div>
+            </div>
+            <div class="stat-card negative" onclick="showGlobalDetails('RETURN')">
+                <div class="stat-icon" style="background: #ef444420;">↩️</div>
+                <div class="stat-value return-value" id="statReturn">0</div>
+                <div class="stat-label">Возвраты</div>
+            </div>
+        </div>
+        
+        <!-- Зона загрузки файла (только для админа) -->
+        <div class="upload-zone admin-only" id="uploadZone">
+            <div class="upload-area" id="uploadArea">
+                <div class="upload-icon">📁</div>
+                <div class="upload-title">Загрузите файл Excel</div>
+                <div class="upload-subtitle">Перетащите файл сюда или нажмите для выбора</div>
+                <input type="file" id="fileInput" accept=".xlsx,.xls" hidden>
+                <button class="btn btn-primary" onclick="document.getElementById('fileInput').click()">
+                    Выбрать файл
+                </button>
+                <div style="margin-top: 16px; opacity: 0.7; font-size: 14px;">
+                    Поддерживаются форматы Excel (.xlsx, .xls) до 50MB
+                </div>
+            </div>
+        </div>
+        
+        <!-- Табы -->
+        <div class="tabs-container" id="tabsContainer">
+            <button class="tab-btn active" onclick="switchTab('table')">
+                📋 Таблица
+            </button>
+            <button class="tab-btn" onclick="switchTab('charts')">
+                📈 Графики
+            </button>
+            <button class="tab-btn" onclick="switchTab('products')">
+                📦 Товары
+            </button>
+            <button class="tab-btn admin-only" onclick="switchTab('database')">
+                🗄️ База данных
+            </button>
+        </div>
+        
+        <!-- Контент вкладки Таблица -->
+        <div class="tab-content active" id="tableTab">
+            <div class="table-container">
+                <div class="table-header">
+                    <div>
+                        <h3>Данные по периодам</h3>
+                    </div>
+                    <div class="table-controls">
+                        <input type="text" class="search-input" placeholder="Поиск..." id="tableSearch">
+                        <button class="btn btn-secondary" onclick="selectAllPeriods()">Выбрать все</button>
+                        <button class="btn btn-secondary" onclick="deselectAllPeriods()">Снять выделение</button>
+                        <button class="btn btn-secondary" onclick="expandAll()">Развернуть</button>
+                        <button class="btn btn-secondary" onclick="collapseAll()">Свернуть</button>
+                    </div>
+                </div>
+                <div style="overflow-x: auto;">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th width="40">✓</th>
+                                <th width="40"></th>
+                                <th>Период</th>
+                                <th class="text-center" colspan="2">Наличные</th>
+                                <th class="text-center" colspan="2">QR</th>
+                                <th class="text-center" colspan="2">VIP</th>
+                                <th class="text-center" colspan="2">Карты</th>
+                                <th class="text-center" colspan="2">Возвраты</th>
+                                <th class="text-center" colspan="2" style="background: linear-gradient(135deg, #667eea, #764ba2); color: white;">Итого</th>
+                            </tr>
+                            <tr>
+                                <th></th>
+                                <th></th>
+                                <th></th>
+                                <th class="text-right">Кол-во</th>
+                                <th class="text-right">Сумма</th>
+                                <th class="text-right">Кол-во</th>
+                                <th class="text-right">Сумма</th>
+                                <th class="text-right">Кол-во</th>
+                                <th class="text-right">Сумма</th>
+                                <th class="text-right">Кол-во</th>
+                                <th class="text-right">Сумма</th>
+                                <th class="text-right">Кол-во</th>
+                                <th class="text-right return-value">Сумма</th>
+                                <th class="text-right" style="background: linear-gradient(135deg, #667eea, #764ba2); color: white;">Кол-во</th>
+                                <th class="text-right" style="background: linear-gradient(135deg, #667eea, #764ba2); color: white;">Сумма</th>
+                            </tr>
+                        </thead>
+                        <tbody id="tableBody">
+                            <!-- Данные таблицы -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Контент вкладки Графики -->
+        <div class="tab-content" id="chartsTab">
+            <div class="charts-grid">
+                <div class="chart-card">
+                    <div class="chart-header">
+                        <h3 class="chart-title">Динамика продаж по месяцам</h3>
+                        <button class="btn btn-secondary" onclick="updateCharts()">🔄</button>
+                    </div>
+                    <div class="chart-container">
+                        <canvas id="salesTrendChart"></canvas>
+                    </div>
+                </div>
+                <div class="chart-card">
+                    <div class="chart-header">
+                        <h3 class="chart-title">Распределение по типам оплаты</h3>
+                    </div>
+                    <div class="chart-container">
+                        <canvas id="paymentTypesChart"></canvas>
+                    </div>
+                </div>
+                <div class="chart-card">
+                    <div class="chart-header">
+                        <h3 class="chart-title">Топ-10 товаров</h3>
+                    </div>
+                    <div class="chart-container">
+                        <canvas id="topProductsChart"></canvas>
+                    </div>
+                </div>
+                <div class="chart-card">
+                    <div class="chart-header">
+                        <h3 class="chart-title">Сравнение периодов</h3>
+                    </div>
+                    <div class="chart-container">
+                        <canvas id="periodComparisonChart"></canvas>
                     </div>
                 </div>
             </div>
-
-            <!-- Вкладка Таблица -->
-            <div class="tab-content" id="table-tab">
-                <div class="table-container">
-                    <div class="table-header">
-                        <h2>Данные по периодам</h2>
-                        <div class="table-controls">
-                            <input type="text" class="search-input" placeholder="Поиск..." id="tableSearch">
-                            <button class="btn btn-secondary">Фильтры</button>
-                            <button class="btn btn-success">Экспорт</button>
-                        </div>
+        </div>
+        
+        <!-- Контент вкладки Товары -->
+        <div class="tab-content" id="productsTab">
+            <div class="table-container">
+                <div class="table-header">
+                    <div>
+                        <h3>Анализ товаров</h3>
                     </div>
-                    <div class="table-wrapper">
-                        <table id="dataTable">
-                            <thead></thead>
-                            <tbody></tbody>
-                        </table>
+                    <div class="table-controls">
+                        <input type="text" class="search-input" placeholder="Поиск товара..." id="productSearch">
+                        <button class="btn btn-success" onclick="exportProducts()">
+                            📥 Экспорт в Excel
+                        </button>
                     </div>
                 </div>
-            </div>
-
-            <!-- Остальные вкладки -->
-            <div class="tab-content" id="charts-tab">
-                <div class="charts-grid" id="chartsGrid"></div>
-            </div>
-
-            <div class="tab-content" id="products-tab">
-                <div class="products-container" id="productsContainer"></div>
-            </div>
-
-            <div class="tab-content" id="database-tab">
-                <div class="database-container">
-                    <div class="db-header">
-                        <h2>Управление базой данных</h2>
-                        <div class="db-controls admin-only">
-                            <button class="btn btn-danger" onclick="clearDatabase()">Очистить БД</button>
-                            <button class="btn btn-primary" onclick="exportDatabase()">Экспорт БД</button>
-                        </div>
-                    </div>
-                    <div class="db-stats" id="dbStats"></div>
-                    <div class="db-content" id="dbContent"></div>
+                <div style="overflow-x: auto;">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>№</th>
+                                <th>Товар</th>
+                                <th>Вариант</th>
+                                <th class="text-right">Продано</th>
+                                <th class="text-right">Возвраты</th>
+                                <th class="text-right">Выручка</th>
+                                <th class="text-right">Средний чек</th>
+                                <th class="text-right">Доля</th>
+                            </tr>
+                        </thead>
+                        <tbody id="productsTableBody">
+                            <!-- Данные товаров -->
+                        </tbody>
+                    </table>
                 </div>
             </div>
-        </main>
+        </div>
+        
+        <!-- Контент вкладки База данных -->
+        <div class="tab-content" id="databaseTab">
+            <div class="database-container">
+                <div class="db-header">
+                    <h2>Управление базой данных</h2>
+                    <div class="db-controls admin-only">
+                        <button class="btn btn-danger" onclick="clearDatabase()">Очистить БД</button>
+                        <button class="btn btn-primary" onclick="exportDatabase()">Экспорт БД</button>
+                    </div>
+                </div>
+                <div class="db-stats" id="dbStats"></div>
+                <div class="db-content" id="dbContent"></div>
+            </div>
+        </div>
     </div>
-
-    <!-- Модальные окна -->
-    <div class="modal" id="modal"></div>
-    <div class="toast-container" id="toastContainer"></div>
+    
+    <!-- Панель итогов -->
+    <div class="summary-panel" id="summaryPanel">
+        <div class="summary-content">
+            <div style="min-width: 200px;">
+                <h4 id="summaryTitle">Выберите периоды</h4>
+                <div style="font-size: 12px; opacity: 0.7;" id="summarySubtitle">для анализа</div>
+            </div>
+            <div class="summary-stats" id="summaryStats">
+                <!-- Динамическая статистика -->
+            </div>
+            <div>
+                <button class="btn btn-primary" onclick="compareSelectedPeriods()" id="compareBtn" style="display: none;">
+                    📊 Сравнить
+                </button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Модальное окно -->
+    <div class="modal" id="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 class="modal-title" id="modalTitle">Детализация</h3>
+                <button class="modal-close" onclick="closeModal()">×</button>
+            </div>
+            <div class="modal-body" id="modalBody">
+                <!-- Динамический контент -->
+            </div>
+        </div>
+    </div>
+    
+    <!-- Индикатор загрузки -->
     <div class="loading-overlay" id="loadingOverlay">
-        <div class="spinner"></div>
+        <div class="loading-content">
+            <div class="loading-spinner"></div>
+            <div class="loading-text" id="loadingText">Обработка данных...</div>
+            <div class="loading-progress" id="loadingProgress">0%</div>
+        </div>
     </div>
+    
+    <!-- Уведомления -->
+    <div class="toast-container" id="toastContainer"></div>
 
     <script src="js/app.js"></script>
 </body>

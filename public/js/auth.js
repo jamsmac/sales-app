@@ -1,7 +1,5 @@
 // Система авторизации
-const API_URL = window.location.hostname === 'localhost' 
-    ? 'http://localhost:3001' 
-    : window.location.origin;
+const API_URL = window.location.origin;
 
 // Обработка формы входа
 document.getElementById('loginForm').addEventListener('submit', async (e) => {
