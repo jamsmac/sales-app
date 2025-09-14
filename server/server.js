@@ -109,11 +109,18 @@ app.use('/api/files', filesRoutes);
 app.use('/api/orders', ordersRoutes);
 app.use('/api/reports', reportsRoutes);
 
+// Выбор типа базы данных из переменных окружения
+const DATABASE_TYPE = process.env.DATABASE_TYPE || 'sqlite';
+console.log(`🗄️ Используется база данных: ${DATABASE_TYPE}`);
+
+const db = DATABASE_TYPE === 'supabase' 
+    ? require('./utils/supabase')
+    : require('./utils/database');
+
 // Database info endpoint
 app.get('/api/database/info', require('./middleware/auth.middleware'), async (req, res) => {
     try {
-        const db = require('./utils/database');
-        const info = await db.getInfo();
+        const info = await db.getDatabaseInfo();
         res.json(info);
     } catch (error) {
         logger.error('Database info error:', error);

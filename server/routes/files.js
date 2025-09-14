@@ -3,190 +3,246 @@ const multer = require('multer');
 const XLSX = require('xlsx');
 const path = require('path');
 const fs = require('fs').promises;
-const { body, validationResult } = require('express-validator');
 const router = express.Router();
 const auth = require('../middleware/auth.middleware');
 const db = require('../utils/database');
 
-// Настройка multer для загрузки файлов
+console.log('📁 Files router загружен');
+
+// ОТЛАДКА: Проверка существования директории uploads
+const uploadsDir = path.join(__dirname, '../../uploads');
+fs.access(uploadsDir)
+    .then(() => console.log('✅ Директория uploads существует:', uploadsDir))
+    .catch(() => {
+        console.log('⚠️ Создание директории uploads:', uploadsDir);
+        return fs.mkdir(uploadsDir, { recursive: true });
+    });
+
+// Настройка multer с расширенной отладкой
 const storage = multer.diskStorage({
     destination: async (req, file, cb) => {
+        console.log('📂 Multer: Определение директории для сохранения');
         const uploadDir = path.join(__dirname, '../../uploads');
+        
         try {
             await fs.mkdir(uploadDir, { recursive: true });
+            console.log('✅ Директория готова:', uploadDir);
             cb(null, uploadDir);
         } catch (error) {
+            console.error('❌ Ошибка создания директории:', error);
             cb(error);
         }
     },
     filename: (req, file, cb) => {
-        // Безопасное имя файла с timestamp
-        const timestamp = Date.now();
-        const safeName = file.originalname.replace(/[^a-zA-Z0-9.-]/g, '_');
-        cb(null, `${timestamp}_${safeName}`);
+        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+        const filename = file.fieldname + '-' + uniqueSuffix + path.extname(file.originalname);
+        console.log('📝 Multer: Генерация имени файла:', filename);
+        cb(null, filename);
     }
 });
 
-// Фильтр файлов - только Excel
-const fileFilter = (req, file, cb) => {
-    const allowedTypes = [
-        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', // .xlsx
-        'application/vnd.ms-excel', // .xls
-        'application/octet-stream' // fallback для некоторых браузеров
-    ];
-    
-    const allowedExtensions = ['.xlsx', '.xls'];
-    const fileExtension = path.extname(file.originalname).toLowerCase();
-    
-    if (allowedTypes.includes(file.mimetype) || allowedExtensions.includes(fileExtension)) {
-        cb(null, true);
-    } else {
-        cb(new Error('Разрешены только файлы Excel (.xlsx, .xls)'), false);
-    }
-};
-
-const upload = multer({
+// Создание multer instance с отладкой
+const upload = multer({ 
     storage: storage,
-    fileFilter: fileFilter,
-    limits: {
-        fileSize: 50 * 1024 * 1024, // 50MB максимум
-        files: 1 // только один файл за раз
+    limits: { 
+        fileSize: parseInt(process.env.MAX_FILE_SIZE) || 52428800,
+        files: 1,
+        fields: 10
+    },
+    fileFilter: (req, file, cb) => {
+        console.log('🔍 Multer: Проверка файла');
+        console.log('   - Оригинальное имя:', file.originalname);
+        console.log('   - MIME тип:', file.mimetype);
+        console.log('   - Поле формы:', file.fieldname);
+        console.log('   - Кодировка:', file.encoding);
+        
+        if (file.originalname.match(/\.(xlsx|xls)$/i)) {
+            console.log('✅ Файл прошел проверку типа');
+            cb(null, true);
+        } else {
+            console.error('❌ Файл не прошел проверку типа');
+            cb(new Error('Только Excel файлы (.xlsx, .xls) разрешены'));
+        }
     }
 });
 
-// Middleware для проверки прав администратора
-const adminOnly = (req, res, next) => {
-    if (req.user.role !== 'admin') {
-        return res.status(403).json({ 
-            error: 'Доступ запрещен. Требуются права администратора.' 
-        });
-    }
+// Middleware для логирования запросов
+router.use((req, res, next) => {
+    console.log(`📨 ${req.method} ${req.path}`);
+    console.log('   Headers:', JSON.stringify(req.headers, null, 2));
+    console.log('   User:', req.user ? req.user.username : 'не авторизован');
     next();
-};
+});
 
-// Валидация Excel структуры
-const validateExcelStructure = (data) => {
-    if (!Array.isArray(data) || data.length < 2) {
-        throw new Error('Файл должен содержать заголовки и хотя бы одну строку данных');
-    }
-    
-    const headers = data[0];
-    if (!headers || headers.length < 13) {
-        throw new Error('Файл должен содержать минимум 13 колонок данных');
-    }
-    
-    // Проверяем наличие критически важных колонок
-    const requiredColumns = [2, 10, 12]; // productName, totalAmount, operationDate
-    for (let colIndex of requiredColumns) {
-        let hasData = false;
-        for (let i = 1; i < Math.min(data.length, 10); i++) { // проверяем первые 10 строк
-            if (data[i] && data[i][colIndex]) {
-                hasData = true;
-                break;
+// Upload endpoint с расширенной отладкой
+router.post('/upload', 
+    // Проверка авторизации
+    (req, res, next) => {
+        console.log('🔐 Проверка авторизации для загрузки');
+        auth(req, res, (err) => {
+            if (err) {
+                console.error('❌ Ошибка авторизации:', err);
+                return res.status(401).json({ error: 'Требуется авторизация' });
             }
-        }
-        if (!hasData) {
-            throw new Error(`Отсутствуют данные в критически важной колонке ${colIndex + 1}`);
-        }
-    }
-    
-    return true;
-};
-
-// Upload file
-router.post('/upload', auth, adminOnly, upload.single('file'), async (req, res) => {
-    try {
-        if (!req.file) {
-            return res.status(400).json({ error: 'Файл не был загружен' });
-        }
-        
-        console.log(`📁 Обработка файла: ${req.file.originalname}`);
-        
-        // Чтение Excel файла
-        const workbook = XLSX.readFile(req.file.path);
-        const sheetName = workbook.SheetNames[0];
-        const worksheet = workbook.Sheets[sheetName];
-        const data = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
-        
-        // Валидация структуры
-        validateExcelStructure(data);
-        
-        // Обработка данных
-        const stats = await db.processFileData(data, req.file, req.user.id);
-        
-        // Удаляем временный файл
-        try {
-            await fs.unlink(req.file.path);
-        } catch (unlinkError) {
-            console.warn('Не удалось удалить временный файл:', unlinkError);
-        }
-        
-        console.log(`✅ Файл обработан: ${stats.new} новых записей из ${stats.total}`);
-        
-        res.json({
-            success: true,
-            message: `Файл успешно обработан. Добавлено ${stats.new} новых записей.`,
-            stats: stats
+            console.log('✅ Пользователь авторизован:', req.user.username);
+            next();
         });
+    },
+    // Проверка роли
+    (req, res, next) => {
+        console.log('👤 Проверка роли пользователя');
+        if (req.user.role !== 'admin') {
+            console.error('❌ Недостаточно прав. Роль:', req.user.role);
+            return res.status(403).json({ error: 'Требуются права администратора' });
+        }
+        console.log('✅ Права администратора подтверждены');
+        next();
+    },
+    // Обработка загрузки с отладкой
+    (req, res, next) => {
+        console.log('📤 Начало обработки загрузки файла');
+        console.log('   Content-Type:', req.headers['content-type']);
+        console.log('   Content-Length:', req.headers['content-length']);
         
-    } catch (error) {
-        console.error('File upload error:', error);
+        const uploadHandler = upload.single('file');
         
-        // Удаляем файл в случае ошибки
-        if (req.file) {
+        uploadHandler(req, res, (err) => {
+            if (err) {
+                console.error('❌ Ошибка Multer:', err);
+                console.error('   Код ошибки:', err.code);
+                console.error('   Сообщение:', err.message);
+                console.error('   Стек:', err.stack);
+                
+                if (err.code === 'LIMIT_FILE_SIZE') {
+                    return res.status(400).json({ 
+                        error: 'Файл слишком большой (максимум 50MB)',
+                        details: `Размер файла: ${req.headers['content-length']} байт`
+                    });
+                }
+                
+                return res.status(400).json({ 
+                    error: err.message || 'Ошибка при загрузке файла',
+                    details: err.toString()
+                });
+            }
+            
+            console.log('✅ Multer обработал запрос успешно');
+            next();
+        });
+    },
+    // Обработка файла
+    async (req, res) => {
+        console.log('📊 Обработка загруженного файла');
+        
+        if (!req.file) {
+            console.error('❌ req.file отсутствует');
+            console.log('   req.body:', req.body);
+            console.log('   req.files:', req.files);
+            return res.status(400).json({ 
+                error: 'Файл не был загружен',
+                details: 'req.file is undefined'
+            });
+        }
+        
+        console.log('📄 Информация о загруженном файле:');
+        console.log('   - Путь:', req.file.path);
+        console.log('   - Размер:', req.file.size, 'байт');
+        console.log('   - Оригинальное имя:', req.file.originalname);
+        console.log('   - Сохранено как:', req.file.filename);
+        
+        try {
+            // Проверка существования файла
+            await fs.access(req.file.path);
+            console.log('✅ Файл существует на диске');
+            
+            // Чтение Excel файла
+            console.log('📖 Чтение Excel файла...');
+            const workbook = XLSX.readFile(req.file.path);
+            console.log('   - Листов в файле:', workbook.SheetNames.length);
+            console.log('   - Названия листов:', workbook.SheetNames);
+            
+            const sheetName = workbook.SheetNames[0];
+            console.log('   - Обработка листа:', sheetName);
+            
+            const worksheet = workbook.Sheets[sheetName];
+            const data = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
+            console.log('   - Строк данных:', data.length);
+            console.log('   - Колонок в первой строке:', data[0] ? data[0].length : 0);
+            
+            // Обработка данных
+            console.log('💾 Сохранение данных в БД...');
+            const stats = db.processFileData(data, req.file, req.user.id);
+            console.log('✅ Данные обработаны:', stats);
+            
+            // Удаление временного файла (опционально)
             try {
                 await fs.unlink(req.file.path);
-            } catch (unlinkError) {
-                console.warn('Не удалось удалить файл после ошибки:', unlinkError);
+                console.log('🗑️ Временный файл удален');
+            } catch (e) {
+                console.log('⚠️ Не удалось удалить временный файл:', e.message);
             }
+            
+            // Отправка успешного ответа
+            const response = {
+                success: true,
+                stats: stats,
+                message: `Файл успешно обработан. Добавлено ${stats.new} новых записей.`,
+                file: {
+                    name: req.file.originalname,
+                    size: req.file.size,
+                    records: data.length - 1
+                }
+            };
+            
+            console.log('✅ Отправка успешного ответа:', response);
+            res.json(response);
+            
+        } catch (error) {
+            console.error('❌ Ошибка обработки файла:', error);
+            console.error('   Сообщение:', error.message);
+            console.error('   Стек:', error.stack);
+            
+            // Попытка удалить файл при ошибке
+            if (req.file && req.file.path) {
+                try {
+                    await fs.unlink(req.file.path);
+                    console.log('🗑️ Файл удален после ошибки');
+                } catch (e) {
+                    console.log('⚠️ Не удалось удалить файл после ошибки');
+                }
+            }
+            
+            res.status(500).json({ 
+                error: 'Ошибка обработки файла',
+                message: error.message,
+                details: process.env.NODE_ENV === 'development' ? error.stack : undefined
+            });
         }
-        
-        // Определяем тип ошибки для пользователя
-        let userMessage = 'Ошибка обработки файла';
-        if (error.message.includes('структур') || error.message.includes('колонок')) {
-            userMessage = error.message;
-        } else if (error.message.includes('Excel') || error.message.includes('XLSX')) {
-            userMessage = 'Ошибка чтения Excel файла. Проверьте формат файла.';
-        }
-        
-        res.status(400).json({ 
-            error: userMessage,
-            details: process.env.NODE_ENV === 'development' ? error.message : undefined
-        });
     }
-});
+);
 
-// Get uploaded files list
-router.get('/', auth, adminOnly, async (req, res) => {
+// Get files list
+router.get('/', auth, (req, res) => {
+    console.log('📋 Запрос списка файлов');
     try {
-        const files = await db.getFiles();
+        const files = db.getFiles();
+        console.log(`✅ Отправка списка из ${files.length} файлов`);
         res.json(files);
     } catch (error) {
-        console.error('Files fetch error:', error);
+        console.error('❌ Ошибка получения списка файлов:', error);
         res.status(500).json({ error: 'Ошибка получения списка файлов' });
     }
 });
 
-// Error handler для multer
-router.use((error, req, res, next) => {
-    if (error instanceof multer.MulterError) {
-        if (error.code === 'LIMIT_FILE_SIZE') {
-            return res.status(400).json({ error: 'Файл слишком большой. Максимальный размер: 50MB' });
-        }
-        if (error.code === 'LIMIT_FILE_COUNT') {
-            return res.status(400).json({ error: 'Можно загружать только один файл за раз' });
-        }
-        if (error.code === 'LIMIT_UNEXPECTED_FILE') {
-            return res.status(400).json({ error: 'Неожиданное поле файла' });
-        }
-    }
-    
-    if (error.message.includes('Excel')) {
-        return res.status(400).json({ error: error.message });
-    }
-    
-    console.error('File upload middleware error:', error);
-    res.status(500).json({ error: 'Ошибка загрузки файла' });
+// Тестовый endpoint для проверки
+router.get('/test', (req, res) => {
+    console.log('🧪 Тестовый запрос к files router');
+    res.json({ 
+        status: 'ok', 
+        message: 'Files router работает',
+        uploadDir: uploadsDir,
+        maxFileSize: parseInt(process.env.MAX_FILE_SIZE) || 52428800
+    });
 });
 
 module.exports = router;

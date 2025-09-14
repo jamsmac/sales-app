@@ -826,47 +826,172 @@ const App = {
         });
     },
     
-    // Загрузка файла
+    // ОТЛАДОЧНАЯ ВЕРСИЯ uploadFile функции
     async uploadFile(file) {
+        console.log('=== НАЧАЛО ЗАГРУЗКИ ФАЙЛА ===');
+        console.log('1. Информация о файле:');
+        console.log('   - Имя:', file.name);
+        console.log('   - Размер:', file.size, 'байт (', (file.size / 1024 / 1024).toFixed(2), 'MB)');
+        console.log('   - Тип:', file.type);
+        console.log('   - Последнее изменение:', new Date(file.lastModified));
+        
+        // Проверка типа файла
         if (!file.name.match(/\.(xlsx|xls)$/i)) {
-            this.showToast('Только файлы Excel (.xlsx, .xls)', 'error');
+            console.error('❌ Файл не является Excel файлом');
+            this.showToast('Поддерживаются только файлы Excel (.xlsx, .xls)', 'error');
             return;
         }
+        console.log('✅ Тип файла корректный');
         
+        // Проверка размера (50MB)
+        if (file.size > 52428800) {
+            console.error('❌ Файл слишком большой:', file.size, 'байт');
+            this.showToast('Файл слишком большой (максимум 50MB)', 'error');
+            return;
+        }
+        console.log('✅ Размер файла в пределах лимита');
+        
+        // Создание FormData
+        console.log('2. Создание FormData...');
         const formData = new FormData();
         formData.append('file', file);
         
+        // Проверка FormData
+        console.log('3. Проверка FormData:');
+        for (let pair of formData.entries()) {
+            console.log('   -', pair[0] + ':', pair[1]);
+        }
+        
+        // Проверка токена
+        console.log('4. Проверка авторизации:');
+        console.log('   - Токен:', this.token ? 'Присутствует' : 'ОТСУТСТВУЕТ!');
+        console.log('   - Длина токена:', this.token ? this.token.length : 0);
+        
+        // URL для загрузки
+        const uploadUrl = `${this.API_URL}/api/files/upload`;
+        console.log('5. URL для загрузки:', uploadUrl);
+        
         try {
             this.showLoading(true, 'Загрузка файла...');
+            console.log('6. Отправка запроса...');
             
-            const response = await fetch(`${this.API_URL}/api/files/upload`, {
-                method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${this.token}`
-                },
-                body: formData
+            // Создаем XMLHttpRequest для отслеживания прогресса
+            const xhr = new XMLHttpRequest();
+            
+            // Промис для асинхронной работы
+            const uploadPromise = new Promise((resolve, reject) => {
+                // Обработчик прогресса загрузки
+                xhr.upload.addEventListener('progress', (e) => {
+                    if (e.lengthComputable) {
+                        const percentComplete = (e.loaded / e.total) * 100;
+                        console.log(`📤 Прогресс загрузки: ${percentComplete.toFixed(2)}%`);
+                        this.showLoading(true, `Загрузка файла... ${Math.round(percentComplete)}%`);
+                    }
+                });
+                
+                // Обработчик успешной загрузки
+                xhr.addEventListener('load', () => {
+                    console.log('7. Ответ получен:');
+                    console.log('   - Статус:', xhr.status);
+                    console.log('   - Статус текст:', xhr.statusText);
+                    console.log('   - Заголовки ответа:', xhr.getAllResponseHeaders());
+                    console.log('   - Тело ответа (первые 500 символов):', xhr.responseText.substring(0, 500));
+                    
+                    if (xhr.status >= 200 && xhr.status < 300) {
+                        try {
+                            const result = JSON.parse(xhr.responseText);
+                            console.log('✅ Ответ успешно распарсен:', result);
+                            resolve(result);
+                        } catch (e) {
+                            console.error('❌ Ошибка парсинга JSON:', e);
+                            console.log('Полный ответ:', xhr.responseText);
+                            reject(new Error('Некорректный JSON в ответе'));
+                        }
+                    } else {
+                        console.error('❌ HTTP ошибка:', xhr.status);
+                        reject(new Error(`HTTP ${xhr.status}: ${xhr.statusText}`));
+                    }
+                });
+                
+                // Обработчик ошибки сети
+                xhr.addEventListener('error', () => {
+                    console.error('❌ Ошибка сети при загрузке');
+                    console.error('   - ReadyState:', xhr.readyState);
+                    console.error('   - Status:', xhr.status);
+                    reject(new Error('Ошибка сети при загрузке файла'));
+                });
+                
+                // Обработчик отмены
+                xhr.addEventListener('abort', () => {
+                    console.warn('⚠️ Загрузка отменена');
+                    reject(new Error('Загрузка отменена'));
+                });
+                
+                // Обработчик таймаута
+                xhr.addEventListener('timeout', () => {
+                    console.error('❌ Таймаут загрузки');
+                    reject(new Error('Превышено время ожидания загрузки'));
+                });
             });
             
-            const result = await response.json();
+            // Настройка и отправка запроса
+            xhr.open('POST', uploadUrl);
+            xhr.setRequestHeader('Authorization', `Bearer ${this.token}`);
+            // НЕ устанавливаем Content-Type для FormData - браузер сделает это сам
             
-            if (response.ok) {
-                this.showToast(result.message, 'success');
-                
-                // Показать статистику загрузки
+            console.log('   - Метод: POST');
+            console.log('   - Заголовки установлены');
+            
+            // Устанавливаем таймаут 5 минут для больших файлов
+            xhr.timeout = 300000;
+            console.log('   - Таймаут: 5 минут');
+            
+            // Отправка
+            xhr.send(formData);
+            console.log('   - Запрос отправлен, ожидание ответа...');
+            
+            // Ждем результат
+            const result = await uploadPromise;
+            
+            console.log('8. Обработка успешного ответа:');
+            this.showToast(result.message || 'Файл успешно загружен', 'success');
+            
+            // Показать статистику загрузки
+            if (result.stats) {
+                console.log('9. Статистика обработки:', result.stats);
                 this.showUploadStats(result.stats);
-                
-                // Перезагрузить данные
-                await this.loadData();
-                this.buildHierarchicalTable();
-            } else {
-                throw new Error(result.error);
             }
-        } catch (error) {
-            this.showToast(error.message, 'error');
-        } finally {
-            this.showLoading(false);
+            
+            // Перезагрузить данные
+            console.log('10. Обновление данных...');
+            await this.loadData();
+            
             // Очистить input
             document.getElementById('fileInput').value = '';
+            console.log('✅ ЗАГРУЗКА ЗАВЕРШЕНА УСПЕШНО');
+            
+        } catch (error) {
+            console.error('❌ ОШИБКА ЗАГРУЗКИ:', error);
+            console.error('Стек ошибки:', error.stack);
+            
+            // Дополнительная диагностика
+            console.log('=== ДОПОЛНИТЕЛЬНАЯ ДИАГНОСТИКА ===');
+            console.log('Состояние приложения:');
+            console.log('- API_URL:', this.API_URL);
+            console.log('- User:', this.user);
+            console.log('- Token exists:', !!this.token);
+            
+            // Проверка доступности сервера
+            console.log('Проверка доступности сервера...');
+            fetch(`${this.API_URL}/health`)
+                .then(r => r.json())
+                .then(data => console.log('✅ Сервер доступен:', data))
+                .catch(e => console.error('❌ Сервер недоступен:', e));
+            
+            this.showToast('Ошибка загрузки: ' + error.message, 'error');
+        } finally {
+            this.showLoading(false);
+            console.log('=== КОНЕЦ ПРОЦЕССА ЗАГРУЗКИ ===');
         }
     },
     
