@@ -3,6 +3,10 @@
   "version": "5.0.0",
   "description": "Онлайн система анализа продаж с авторизацией",
   "main": "server/server.js",
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=8.0.0"
+  },
   "scripts": {
     "start": "node server/server.js",
     "dev": "nodemon server/server.js",

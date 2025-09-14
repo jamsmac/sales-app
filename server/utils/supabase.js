@@ -14,8 +14,22 @@ class SupabaseDatabase {
             throw new Error('Supabase configuration missing');
         }
         
-        this.supabase = createClient(this.supabaseUrl, this.supabaseKey);
+        this.supabase = createClient(this.supabaseUrl, this.supabaseKey, {
+            db: {
+                schema: 'public',
+            },
+            auth: {
+                persistSession: false
+            },
+            global: {
+                headers: { 'x-client': 'sales-analytics-v5' },
+            },
+        });
         console.log('✅ Supabase клиент инициализирован');
+        
+        // Добавляем retry логику
+        this.maxRetries = 3;
+        this.retryDelay = 1000; // 1 секунда
     }
 
     // Инициализация базы данных (проверка подключения)
