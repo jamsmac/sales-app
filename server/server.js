@@ -173,7 +173,7 @@ app.get('/api/database/info', require('./middleware/auth.middleware'), async (re
 });
 
 // Clear database (admin only)
-app.delete('/api/database/clear', 
+app.delete('/api/database/clear',
     require('./middleware/auth.middleware'),
     (req, res, next) => {
         if (req.user.role !== 'admin') {
@@ -183,7 +183,6 @@ app.delete('/api/database/clear',
     },
     async (req, res) => {
         try {
-            const db = require('./utils/database');
             const result = await db.clear();
             logger.info(`Database cleared by user ${req.user.username}`);
             res.json(result);
@@ -198,7 +197,6 @@ app.delete('/api/database/clear',
 app.get('/api/export', require('./middleware/auth.middleware'), async (req, res) => {
     const XLSX = require('xlsx');
     const fs = require('fs').promises;
-    const db = require('./utils/database');
     
     try {
         const orders = await db.getOrders();
@@ -320,29 +318,27 @@ app.use((req, res) => {
 // Graceful shutdown
 process.on('SIGTERM', async () => {
     logger.info('SIGTERM received, shutting down gracefully');
-    
+
     try {
-        const db = require('./utils/database');
         await db.close();
         logger.info('Database connection closed');
     } catch (error) {
         logger.error('Error closing database:', error);
     }
-    
+
     process.exit(0);
 });
 
 process.on('SIGINT', async () => {
     logger.info('SIGINT received, shutting down gracefully');
-    
+
     try {
-        const db = require('./utils/database');
         await db.close();
         logger.info('Database connection closed');
     } catch (error) {
         logger.error('Error closing database:', error);
     }
-    
+
     process.exit(0);
 });
 
