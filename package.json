@@ -11,12 +11,16 @@
     "start": "node server/server.js",
     "dev": "nodemon server/server.js",
     "init-db": "node server/utils/init-db.js",
-    "setup": "node setup-supabase.js"
+    "setup": "node setup-supabase.js",
+    "pre-deploy": "node scripts/pre-deploy-check.js",
+    "deploy": "npm run pre-deploy && echo 'Ready for deployment!'"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
     "compression": "^1.7.4",
+    "cookie-parser": "^1.4.6",
     "cors": "^2.8.5",
+    "csurf": "^1.11.0",
     "dotenv": "^16.3.1",
     "express": "^4.18.2",
     "express-rate-limit": "^7.1.5",

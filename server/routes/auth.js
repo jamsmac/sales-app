@@ -57,20 +57,23 @@ router.post('/login', loginLimiter, loginValidation, async (req, res) => {
             return res.status(401).json({ error: 'Неверные учетные данные' });
         }
         
-        // Проверяем наличие JWT_SECRET
-        const jwtSecret = process.env.JWT_SECRET;
-        if (!jwtSecret || jwtSecret === 'secret') {
-            console.error('⚠️  ВНИМАНИЕ: Используется небезопасный JWT_SECRET!');
-        }
-        
         const token = jwt.sign(
             { id: user.id, username: user.username, role: user.role },
-            jwtSecret || 'fallback-secret-change-in-production',
+            process.env.JWT_SECRET,
             { expiresIn: process.env.SESSION_DURATION || '8h' }
         );
         
+        // Устанавливаем httpOnly cookie
+        res.cookie('auth_token', token, {
+            httpOnly: true,
+            secure: process.env.NODE_ENV === 'production',
+            sameSite: 'strict',
+            maxAge: 8 * 60 * 60 * 1000 // 8 часов
+        });
+        
+        // Отправляем только информацию о пользователе (без токена)
         res.json({
-            token,
+            success: true,
             user: {
                 id: user.id,
                 username: user.username,

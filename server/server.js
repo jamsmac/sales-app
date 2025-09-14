@@ -7,6 +7,22 @@ const winston = require('winston');
 const path = require('path');
 require('dotenv').config();
 
+// Проверка окружения
+require('./utils/check-env')();
+
+// КРИТИЧЕСКАЯ ПРОВЕРКА JWT_SECRET
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET || JWT_SECRET === 'your-super-secret-jwt-key-here' || JWT_SECRET.length < 32) {
+    console.error('═══════════════════════════════════════════════════════');
+    console.error('🔴 FATAL ERROR: JWT_SECRET не настроен!');
+    console.error('═══════════════════════════════════════════════════════');
+    console.error('1. Откройте файл .env');
+    console.error('2. Установите JWT_SECRET минимум 32 символа');
+    console.error('3. Пример: JWT_SECRET=' + require('crypto').randomBytes(32).toString('hex'));
+    console.error('═══════════════════════════════════════════════════════');
+    process.exit(1);
+}
+
 const authRoutes = require('./routes/auth');
 const filesRoutes = require('./routes/files');
 const ordersRoutes = require('./routes/orders');
@@ -83,6 +99,28 @@ app.use(cors({
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
+// Cookie parser для httpOnly cookies
+const cookieParser = require('cookie-parser');
+app.use(cookieParser());
+
+// CSRF защита
+const csrf = require('csurf');
+const csrfProtection = csrf({ 
+    cookie: {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'strict'
+    }
+});
+
+// Применяем CSRF защиту ко всем POST/PUT/DELETE запросам
+app.use('/api', csrfProtection);
+
+// Endpoint для получения CSRF токена
+app.get('/api/csrf-token', (req, res) => {
+    res.json({ csrfToken: req.csrfToken() });
+});
+
 // Health check endpoint
 app.get('/health', (req, res) => {
     res.json({ 
@@ -103,19 +141,25 @@ app.use(express.static(path.join(__dirname, '../public')));
 app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 app.use('/exports', express.static(path.join(__dirname, '../exports')));
 
+// Выбор роутера файлов в зависимости от окружения
+const DATABASE_TYPE = process.env.DATABASE_TYPE || 'sqlite';
+const filesRouter = DATABASE_TYPE === 'supabase' || process.env.NODE_ENV === 'production'
+    ? require('./routes/files-memory')  // Для облака (Railway/Heroku)
+    : require('./routes/files');         // Для локальной разработки
+
+console.log(`📁 Используется файловый роутер: ${DATABASE_TYPE === 'supabase' || process.env.NODE_ENV === 'production' ? 'memory' : 'disk'}`);
+
 // API Routes
 app.use('/api/auth', authRoutes);
-app.use('/api/files', filesRoutes);
+app.use('/api/files', filesRouter);
 app.use('/api/orders', ordersRoutes);
 app.use('/api/reports', reportsRoutes);
-
-// Выбор типа базы данных из переменных окружения
-const DATABASE_TYPE = process.env.DATABASE_TYPE || 'sqlite';
-console.log(`🗄️ Используется база данных: ${DATABASE_TYPE}`);
 
 const db = DATABASE_TYPE === 'supabase' 
     ? require('./utils/supabase')
     : require('./utils/database');
+
+console.log(`🗄️ Используется база данных: ${DATABASE_TYPE}`);
 
 // Database info endpoint
 app.get('/api/database/info', require('./middleware/auth.middleware'), async (req, res) => {

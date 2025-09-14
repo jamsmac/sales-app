@@ -506,6 +506,346 @@ class SupabaseDatabase {
         }
     }
 
+    // Метод обработки Excel данных
+    async processFileData(excelData, fileInfo, userId) {
+        try {
+            console.log('📊 Обработка данных Excel в Supabase...');
+            
+            // Сохраняем информацию о файле
+            const { data: file, error: fileError } = await this.supabase
+                .from('uploaded_files')
+                .insert({
+                    file_name: fileInfo.filename,
+                    original_name: fileInfo.originalname,
+                    file_size: fileInfo.size,
+                    mime_type: fileInfo.mimetype,
+                    uploaded_by: userId,
+                    processing_status: 'processing'
+                })
+                .select()
+                .single();
+            
+            if (fileError) throw fileError;
+            
+            const stats = {
+                total: 0,
+                new: 0,
+                updated: 0,
+                duplicate: 0,
+                error: 0
+            };
+            
+            // Пропускаем заголовок
+            const dataRows = excelData.slice(1);
+            stats.total = dataRows.length;
+            
+            // Обрабатываем каждую строку
+            for (const row of dataRows) {
+                try {
+                    // Маппинг колонок Excel на поля БД
+                    const orderData = this.mapExcelRowToOrder(row, excelData[0], file.id);
+                    
+                    // Проверяем существование заказа
+                    const { data: existing } = await this.supabase
+                        .from('orders')
+                        .select('id')
+                        .eq('order_number', orderData.order_number)
+                        .single();
+                    
+                    if (existing) {
+                        // Обновляем существующий
+                        const { error } = await this.supabase
+                            .from('orders')
+                            .update(orderData)
+                            .eq('id', existing.id);
+                        
+                        if (error) throw error;
+                        stats.updated++;
+                    } else {
+                        // Создаем новый
+                        const { error } = await this.supabase
+                            .from('orders')
+                            .insert(orderData);
+                        
+                        if (error) throw error;
+                        stats.new++;
+                    }
+                } catch (error) {
+                    console.error('Ошибка обработки строки:', error);
+                    stats.error++;
+                }
+            }
+            
+            // Обновляем статус файла
+            await this.supabase
+                .from('uploaded_files')
+                .update({
+                    processing_status: 'completed',
+                    records_total: stats.total,
+                    records_new: stats.new,
+                    records_updated: stats.updated,
+                    records_error: stats.error
+                })
+                .eq('id', file.id);
+            
+            console.log('✅ Обработка завершена:', stats);
+            return stats;
+        } catch (error) {
+            console.error('❌ Ошибка обработки файла:', error);
+            throw error;
+        }
+    }
+
+    // Маппинг данных Excel на структуру БД
+    mapExcelRowToOrder(row, headers, fileId) {
+        // Создаем объект с индексами колонок
+        const cols = {};
+        headers.forEach((header, index) => {
+            cols[header] = index;
+        });
+        
+        // Определяем тип оплаты
+        let paymentType = 'CASH';
+        const paymentRaw = row[cols['Тип оплаты']] || row[cols['Order resource']] || '';
+        
+        if (paymentRaw.toLowerCase().includes('qr')) paymentType = 'QR';
+        else if (paymentRaw.toLowerCase().includes('card') || paymentRaw.toLowerCase().includes('карт')) paymentType = 'CARD';
+        else if (paymentRaw.toLowerCase().includes('vip')) paymentType = 'VIP';
+        else if (paymentRaw.toLowerCase().includes('return') || paymentRaw.toLowerCase().includes('возврат')) paymentType = 'RETURN';
+        
+        // Парсим дату
+        let operationDate = new Date();
+        if (row[cols['Дата']] || row[cols['Time']]) {
+            const dateValue = row[cols['Дата']] || row[cols['Time']];
+            // Excel хранит даты как числа (дни с 1900-01-01)
+            if (typeof dateValue === 'number') {
+                operationDate = new Date((dateValue - 25569) * 86400 * 1000);
+            } else {
+                operationDate = new Date(dateValue);
+            }
+        }
+        
+        // Парсим сумму
+        const parseAmount = (value) => {
+            if (!value) return 0;
+            return parseFloat(String(value).replace(/[^\d.-]/g, '')) || 0;
+        };
+        
+        return {
+            order_number: row[cols['Номер заказа']] || row[cols['Order number']] || `order_${Date.now()}`,
+            product_name: row[cols['Наименование товара']] || row[cols['Товар']] || row[cols['Goods name']] || 'Неизвестно',
+            product_variant: row[cols['Название вкуса']] || row[cols['Вариант']] || 'Стандарт',
+            payment_type: paymentType,
+            payment_type_raw: paymentRaw,
+            quantity: parseFloat(row[cols['Кол-во']] || row[cols['Quantity']] || 1),
+            unit: row[cols['Ед.']] || 'шт',
+            price_per_unit: parseAmount(row[cols['Цена']] || row[cols['Price']]),
+            total_amount: parseAmount(row[cols['Сумма']] || row[cols['Order price']] || row[cols['Total']]),
+            discount_percent: parseFloat(row[cols['Скидка%']] || 0),
+            discount_amount: parseAmount(row[cols['Скидка']] || 0),
+            is_return: paymentType === 'RETURN',
+            operation_date: operationDate.toISOString().split('T')[0],
+            operation_time: operationDate.toTimeString().split(' ')[0],
+            year: operationDate.getFullYear(),
+            month: operationDate.getMonth() + 1,
+            day: operationDate.getDate(),
+            cashier: row[cols['Кассир']] || row[cols['Оператор']] || null,
+            customer_name: row[cols['Клиент']] || null,
+            file_id: fileId,
+            uploaded_by: null
+        };
+    }
+
+    // Получение заказов с фильтрацией
+    async getOrders(filters = {}) {
+        try {
+            let query = this.supabase
+                .from('orders')
+                .select('*')
+                .order('operation_date', { ascending: false });
+            
+            // Применяем фильтры
+            if (filters.year) query = query.eq('year', filters.year);
+            if (filters.month) query = query.eq('month', filters.month);
+            if (filters.day) query = query.eq('day', filters.day);
+            if (filters.paymentType && filters.paymentType !== 'ALL') {
+                query = query.eq('payment_type', filters.paymentType);
+            }
+            
+            const { data, error } = await query;
+            
+            if (error) throw error;
+            return data;
+        } catch (error) {
+            console.error('❌ Ошибка получения заказов:', error);
+            throw error;
+        }
+    }
+
+    // Получение статистики заказов
+    async getOrdersStats() {
+        try {
+            const { data, error } = await this.supabase
+                .from('sales_summary')
+                .select('*')
+                .order('period_key', { ascending: false });
+            
+            if (error) throw error;
+            
+            // Группируем по периодам
+            const stats = {
+                total: 0,
+                byPaymentType: {
+                    CASH: { count: 0, sum: 0 },
+                    QR: { count: 0, sum: 0 },
+                    VIP: { count: 0, sum: 0 },
+                    CARD: { count: 0, sum: 0 },
+                    RETURN: { count: 0, sum: 0 }
+                },
+                byPeriod: {}
+            };
+            
+            data.forEach(row => {
+                stats.total += row.total_amount;
+                if (stats.byPaymentType[row.payment_type]) {
+                    stats.byPaymentType[row.payment_type].count += row.transactions_count;
+                    stats.byPaymentType[row.payment_type].sum += row.total_amount;
+                }
+                
+                if (!stats.byPeriod[row.period_key]) {
+                    stats.byPeriod[row.period_key] = {
+                        total: 0,
+                        byType: {}
+                    };
+                }
+                stats.byPeriod[row.period_key].total += row.total_amount;
+                stats.byPeriod[row.period_key].byType[row.payment_type] = row.total_amount;
+            });
+            
+            return stats;
+        } catch (error) {
+            console.error('❌ Ошибка получения статистики:', error);
+            throw error;
+        }
+    }
+
+    // Загрузка файла в Supabase Storage
+    async uploadFileToStorage(buffer, filename, mimetype) {
+        try {
+            console.log('📤 Загрузка файла в Supabase Storage...');
+            
+            // Создаем уникальное имя файла
+            const timestamp = Date.now();
+            const safeName = filename.replace(/[^a-zA-Z0-9.-]/g, '_');
+            const storagePath = `uploads/${timestamp}_${safeName}`;
+            
+            // Загружаем в Storage
+            const { data, error } = await this.supabase.storage
+                .from('excel-files')
+                .upload(storagePath, buffer, {
+                    contentType: mimetype,
+                    upsert: false
+                });
+            
+            if (error) throw error;
+            
+            // Получаем публичный URL
+            const { data: { publicUrl } } = this.supabase.storage
+                .from('excel-files')
+                .getPublicUrl(storagePath);
+            
+            console.log('✅ Файл загружен:', publicUrl);
+            return {
+                path: storagePath,
+                url: publicUrl
+            };
+        } catch (error) {
+            console.error('❌ Ошибка загрузки в Storage:', error);
+            throw error;
+        }
+    }
+
+    // Скачивание файла из Storage
+    async downloadFileFromStorage(path) {
+        try {
+            const { data, error } = await this.supabase.storage
+                .from('excel-files')
+                .download(path);
+            
+            if (error) throw error;
+            return data;
+        } catch (error) {
+            console.error('❌ Ошибка скачивания из Storage:', error);
+            throw error;
+        }
+    }
+
+    // Удаление файла из Storage
+    async deleteFileFromStorage(path) {
+        try {
+            const { error } = await this.supabase.storage
+                .from('excel-files')
+                .remove([path]);
+            
+            if (error) throw error;
+            console.log('✅ Файл удален из Storage');
+        } catch (error) {
+            console.error('❌ Ошибка удаления из Storage:', error);
+            throw error;
+        }
+    }
+
+    // Методы для совместимости с SQLite интерфейсом
+    async getUserByUsername(username) {
+        try {
+            const { data: users, error } = await this.supabase
+                .from('users')
+                .select('*')
+                .eq('username', username)
+                .limit(1);
+            
+            if (error) throw error;
+            
+            if (!users || users.length === 0) {
+                return null;
+            }
+            
+            const user = users[0];
+            return {
+                id: user.id,
+                username: user.username,
+                password: user.password_hash,
+                fullName: user.full_name,
+                role: user.role
+            };
+        } catch (error) {
+            console.error('❌ Ошибка получения пользователя:', error);
+            throw error;
+        }
+    }
+
+    async getUserById(id) {
+        try {
+            const { data: user, error } = await this.supabase
+                .from('users')
+                .select('*')
+                .eq('id', id)
+                .single();
+            
+            if (error) throw error;
+            
+            return {
+                id: user.id,
+                username: user.username,
+                fullName: user.full_name,
+                role: user.role
+            };
+        } catch (error) {
+            console.error('❌ Ошибка получения пользователя по ID:', error);
+            throw error;
+        }
+    }
+
     // Получение данных для отчетов
     async getReportsData() {
         try {
@@ -517,6 +857,12 @@ class SupabaseDatabase {
             console.error('❌ Ошибка получения данных отчетов:', error);
             throw error;
         }
+    }
+
+    // Закрытие соединения (для совместимости)
+    async close() {
+        console.log('🔌 Supabase соединение закрыто');
+        return true;
     }
 }
 
